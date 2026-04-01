@@ -1,19 +1,16 @@
-﻿using System.Text.Json;
-
 namespace DBFMiner.Shared.Serialization;
 
 public static class SharedJson
 {
-    public static JsonSerializerOptions Default { get; } = Create(writeIndented: false);
-    public static JsonSerializerOptions Indented { get; } = Create(writeIndented: true);
+    public static AppJsonSerializerContext DefaultContext { get; } = Create(writeIndented: false);
+    public static AppJsonSerializerContext IndentedContext { get; } = Create(writeIndented: true);
 
-    private static JsonSerializerOptions Create(bool writeIndented)
+    private static AppJsonSerializerContext Create(bool writeIndented)
     {
-        return new JsonSerializerOptions
+        return new AppJsonSerializerContext(new System.Text.Json.JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true,
-            WriteIndented = writeIndented,
-            TypeInfoResolver = AppJsonSerializerContext.Default
-        };
+            WriteIndented = writeIndented
+        });
     }
 }

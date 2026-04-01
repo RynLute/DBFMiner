@@ -50,6 +50,7 @@ public sealed partial class SettingsForm : Form
     private string? _previewPattern;
     private HashSet<string> _selectedPreviewFiles = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<int> _selectedPreviewYears = new();
+    private DbfMinerConfig _loadedConfig = CreateDefaultConfig();
 
     public event EventHandler? ReloadRequested;
 
@@ -349,13 +350,13 @@ public sealed partial class SettingsForm : Form
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_configPath)!);
             var defaultConfig = CreateDefaultConfig();
-            var defaultJson = JsonSerializer.Serialize(defaultConfig, SharedJson.Indented);
+            var defaultJson = JsonSerializer.Serialize(defaultConfig, SharedJson.IndentedContext.DbfMinerConfig);
             await File.WriteAllTextAsync(_configPath, defaultJson).ConfigureAwait(true);
             return defaultConfig;
         }
 
         var json = await File.ReadAllTextAsync(_configPath).ConfigureAwait(true);
-        var cfg = JsonSerializer.Deserialize<DbfMinerConfig>(json, SharedJson.Default);
+        var cfg = JsonSerializer.Deserialize(json, SharedJson.DefaultContext.DbfMinerConfig);
 
         if (cfg is null)
             throw new InvalidOperationException("Failed to deserialize config.json");
@@ -365,6 +366,7 @@ public sealed partial class SettingsForm : Form
 
     private void BindConfig(DbfMinerConfig cfg)
     {
+        _loadedConfig = cfg;
         _dbfFolderTextBox.Text = cfg.DbfFolder;
         _dbfPatternTextBox.Text = string.IsNullOrWhiteSpace(cfg.DbfSearchPattern) ? "*.dbf" : cfg.DbfSearchPattern;
         _selectedPreviewFiles = new HashSet<string>(cfg.SelectedDbfFiles, StringComparer.OrdinalIgnoreCase);
@@ -426,6 +428,8 @@ public sealed partial class SettingsForm : Form
             Postgres = CollectPostgresConfig(),
             Ingestion = new IngestionConfig
             {
+                DbfRowsTable = _loadedConfig.Ingestion.DbfRowsTable,
+                IngestionFilesTable = _loadedConfig.Ingestion.IngestionFilesTable,
                 BatchSize = Decimal.ToInt32(_batchSizeNumeric.Value)
             }
         };
@@ -458,19 +462,20 @@ public sealed partial class SettingsForm : Form
             if (MessageBox.Show(confirmText, "Confirm Settings", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
                 return;
 
-            var text = JsonSerializer.Serialize(cfg, SharedJson.Indented);
+            var text = JsonSerializer.Serialize(cfg, SharedJson.IndentedContext.DbfMinerConfig);
+            var reloadUrl = BuildServiceUrl(_loadedConfig.Api) + "/api/config/reload";
 
             Directory.CreateDirectory(Path.GetDirectoryName(_configPath)!);
             await File.WriteAllTextAsync(_configPath, text).ConfigureAwait(true);
+            _loadedConfig = cfg;
 
-            var url = $"http://{cfg.Api.Host}:{cfg.Api.Port}/api/config/reload";
-            using var resp = await _httpClient.PostAsync(url, content: null).ConfigureAwait(true);
+            using var resp = await _httpClient.PostAsync(reloadUrl, content: null).ConfigureAwait(true);
             var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(true);
 
             if (!resp.IsSuccessStatusCode)
                 throw new InvalidOperationException($"Reload failed: {body}");
 
-            var reloadResp = JsonSerializer.Deserialize<ReloadResponseDto>(body, SharedJson.Default);
+            var reloadResp = JsonSerializer.Deserialize(body, SharedJson.DefaultContext.ReloadResponseDto);
 
             MessageBox.Show(
                 reloadResp?.Message ?? "Configuration applied",
@@ -914,6 +919,11 @@ where source_file = @source_file and row_index = @row_index;",
             Timeout = 5,
             CommandTimeout = 10
         };
+    }
+
+    private static string BuildServiceUrl(ApiConfig api)
+    {
+        return $"http://{api.Host}:{api.Port}";
     }
 
     private static string QuoteIdentifier(string identifier)

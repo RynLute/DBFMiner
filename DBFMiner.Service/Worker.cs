@@ -1,10 +1,8 @@
 using System.Security.Cryptography;
-using DBFMiner.Service;
-using DBFMiner.Shared;
 using DBFMiner.Shared.Dbf;
 using DBFMiner.Shared.Models;
 
-namespace DbfMiner.Service;
+namespace DBFMiner.Service;
 
 public class Worker : BackgroundService
 {
@@ -15,6 +13,7 @@ public class Worker : BackgroundService
 
     private long _totalRowsProcessed;
     private long _totalRowsInserted;
+    private string? _ensuredStorageKey;
 
     public Worker(
         ILogger<Worker> logger,
@@ -32,8 +31,6 @@ public class Worker : BackgroundService
     {
         _statusStore.ResetCounters();
         _statusStore.SetState("Idle");
-
-        await _repository.EnsureTablesAsync(stoppingToken).ConfigureAwait(false);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -53,6 +50,8 @@ public class Worker : BackgroundService
 
             try
             {
+                await EnsureRepositoryReadyAsync(cfg, stoppingToken).ConfigureAwait(false);
+
                 _statusStore.SetState("Processing");
                 _statusStore.SetLastError(null);
                 await ScanAndProcessAsync(stoppingToken).ConfigureAwait(false);
@@ -64,6 +63,7 @@ public class Worker : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Processing loop failed");
+                _statusStore.SetCurrentFile(null, null);
                 _statusStore.SetLastError(ex.Message);
             }
 
@@ -83,6 +83,29 @@ public class Worker : BackgroundService
         catch (OperationCanceledException)
         {
         }
+    }
+
+    private async Task EnsureRepositoryReadyAsync(DbfMinerConfig cfg, CancellationToken cancellationToken)
+    {
+        var storageKey = BuildStorageKey(cfg);
+        if (string.Equals(_ensuredStorageKey, storageKey, StringComparison.Ordinal))
+            return;
+
+        await _repository.EnsureTablesAsync(cancellationToken).ConfigureAwait(false);
+        _ensuredStorageKey = storageKey;
+    }
+
+    private static string BuildStorageKey(DbfMinerConfig cfg)
+    {
+        return string.Join(
+            '|',
+            cfg.Postgres.Host,
+            cfg.Postgres.Port,
+            cfg.Postgres.Database,
+            cfg.Postgres.Username,
+            cfg.Postgres.Schema,
+            cfg.Ingestion.DbfRowsTable,
+            cfg.Ingestion.IngestionFilesTable);
     }
 
     private async Task ScanAndProcessAsync(CancellationToken cancellationToken)
@@ -129,9 +152,12 @@ public class Worker : BackgroundService
 
         DbfHeaderInfo? header = null;
         long fileSize = 0;
+        PostgresRepository.IngestionSession? session = null;
 
         try
         {
+            session = await _repository.OpenSessionAsync(cancellationToken).ConfigureAwait(false);
+
             if (!DbfMinerConfig.TryParseDbfFilePath(filePath, out var fileInfo))
                 throw new InvalidDataException(
                     $"DBF file name '{Path.GetFileName(filePath)}' must match pattern nnnndddd.dbf, where nnnn is meter number and dddd is year.");
@@ -140,7 +166,7 @@ public class Worker : BackgroundService
             fileSize = stream.Length;
             header = await DbfBinaryReader.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
 
-            var checkpoint = await _repository.GetFileCheckpointAsync(filePath, cancellationToken).ConfigureAwait(false);
+            var checkpoint = await session.GetFileCheckpointAsync(filePath, cancellationToken).ConfigureAwait(false);
             var decision = DbfCheckpointDecision.Create(filePath, checkpoint, header, fileSize, fileLastWriteTicks);
             var parser = new DbfRecordParser(header);
 
@@ -151,7 +177,7 @@ public class Worker : BackgroundService
 
             _statusStore.SetCurrentPosition(decision.StartByteOffset, decision.StartRecordIndex, decision.ResetReason);
 
-            await _repository.MarkFileProcessingAsync(
+            await session.MarkFileProcessingAsync(
                     filePath,
                     fileLastWriteTicks,
                     fileSize,
@@ -167,7 +193,7 @@ public class Worker : BackgroundService
 
             if (!decision.HasNewRecords)
             {
-                await _repository.MarkFileCompletedAsync(
+                await session.MarkFileCompletedAsync(
                         filePath,
                         fileLastWriteTicks,
                         fileSize,
@@ -220,6 +246,7 @@ public class Worker : BackgroundService
                 if (batch.Count >= batchSize)
                 {
                     var inserted = await FlushBatchAsync(
+                            session,
                             filePath,
                             fileLastWriteTicks,
                             fileSize,
@@ -250,6 +277,7 @@ public class Worker : BackgroundService
             if (batch.Count > 0)
             {
                 var inserted = await FlushBatchAsync(
+                        session,
                         filePath,
                         fileLastWriteTicks,
                         fileSize,
@@ -272,7 +300,7 @@ public class Worker : BackgroundService
             _statusStore.UpdateRowProgress(_totalRowsProcessed, _totalRowsInserted);
             _statusStore.SetCurrentPosition(nextByteOffset, nextRecordIndex, decision.ResetReason);
 
-            await _repository.MarkFileCompletedAsync(
+            await session.MarkFileCompletedAsync(
                     filePath,
                     fileLastWriteTicks,
                     fileSize,
@@ -294,25 +322,34 @@ public class Worker : BackgroundService
             _statusStore.SetCurrentFile(filePath, "error");
             _statusStore.SetLastError(ex.Message);
 
-            try
+            if (session is not null)
             {
-                await _repository.UpdateFileErrorAsync(
-                        filePath,
-                        fileLastWriteTicks,
-                        fileSize,
-                        header,
-                        ex.ToString(),
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                try
+                {
+                    await session.UpdateFileErrorAsync(
+                            filePath,
+                            fileLastWriteTicks,
+                            fileSize,
+                            header,
+                            ex.ToString(),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception dbEx)
+                {
+                    _logger.LogError(dbEx, "Also failed to update file error status");
+                }
             }
-            catch (Exception dbEx)
-            {
-                _logger.LogError(dbEx, "Also failed to update file error status");
-            }
+        }
+        finally
+        {
+            if (session is not null)
+                await session.DisposeAsync().ConfigureAwait(false);
         }
     }
 
     private async Task<int> FlushBatchAsync(
+        PostgresRepository.IngestionSession session,
         string filePath,
         long fileLastWriteTicks,
         long fileSize,
@@ -325,7 +362,7 @@ public class Worker : BackgroundService
         long fileRowsInserted,
         CancellationToken cancellationToken)
     {
-        var inserted = await _repository.PersistBatchAsync(
+        var inserted = await session.PersistBatchAsync(
                 filePath,
                 fileLastWriteTicks,
                 fileSize,
@@ -343,10 +380,10 @@ public class Worker : BackgroundService
         return inserted;
     }
 
-    private static string ComputeRowHash(byte[] recordBytes)
+    private static string ComputeRowHash(ReadOnlySpan<byte> recordBytes)
     {
-        using var sha = SHA256.Create();
-        var hash = sha.ComputeHash(recordBytes);
+        Span<byte> hash = stackalloc byte[32];
+        SHA256.TryHashData(recordBytes, hash, out _);
         return Convert.ToHexString(hash);
     }
 }

@@ -1,4 +1,3 @@
-using DbfMiner.Service;
 using DBFMiner.Service;
 using DBFMiner.Shared;
 

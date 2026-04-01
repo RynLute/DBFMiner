@@ -76,7 +76,7 @@ public partial class Form1 : Form
 
         _notifyIcon = new NotifyIcon
         {
-            Text = "CsvMinerMK",
+            Text = "DBFMiner",
             Icon = SystemIcons.Application,
             Visible = true,
             ContextMenuStrip = _menu
@@ -170,7 +170,7 @@ public partial class Form1 : Form
         resp.EnsureSuccessStatusCode();
 
         var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-        var dto = JsonSerializer.Deserialize<ServiceStatusDto>(json, SharedJson.Default);
+        var dto = JsonSerializer.Deserialize(json, SharedJson.DefaultContext.ServiceStatusDto);
 
         if (dto is null)
             throw new InvalidOperationException("Empty /api/status response");
@@ -180,7 +180,7 @@ public partial class Form1 : Form
 
     private void ShowSettingsDialog()
     {
-        var form = new SettingsForm(GetConfigPath(), _httpClient);
+        using var form = new SettingsForm(GetConfigPath(), _httpClient);
         form.ReloadRequested += async (_, _) =>
         {
             await PollServiceStatusAsync();
@@ -214,14 +214,14 @@ public partial class Form1 : Form
                 Postgres = new(),
                 Ingestion = new()
             };
-            var json = JsonSerializer.Serialize(defaultConfig, SharedJson.Indented);
+            var json = JsonSerializer.Serialize(defaultConfig, SharedJson.IndentedContext.DbfMinerConfig);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await File.WriteAllTextAsync(path, json).ConfigureAwait(false);
             return defaultConfig;
         }
 
         var text = await File.ReadAllTextAsync(path).ConfigureAwait(false);
-        var cfg = JsonSerializer.Deserialize<DbfMinerConfig>(text, SharedJson.Default);
+        var cfg = JsonSerializer.Deserialize(text, SharedJson.DefaultContext.DbfMinerConfig);
 
         if (cfg is null)
             throw new InvalidOperationException("Failed to read config.json");

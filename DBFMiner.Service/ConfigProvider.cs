@@ -53,7 +53,9 @@ public sealed class ConfigProvider
         CancellationToken cancellationToken,
         bool createIfMissing)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_configPath)!);
+        var configDirectory = Path.GetDirectoryName(_configPath);
+        if (!string.IsNullOrWhiteSpace(configDirectory))
+            Directory.CreateDirectory(configDirectory);
 
         if (!File.Exists(_configPath))
         {
@@ -73,7 +75,7 @@ public sealed class ConfigProvider
 
             var json = JsonSerializer.Serialize(
                 defaultConfig,
-                SharedJson.Indented);
+                SharedJson.IndentedContext.DbfMinerConfig);
 
             await File.WriteAllTextAsync(_configPath, json, cancellationToken).ConfigureAwait(false);
             _current = defaultConfig;
@@ -87,7 +89,7 @@ public sealed class ConfigProvider
 
         var cfg = JsonSerializer.Deserialize<DbfMinerConfig>(
             text,
-            SharedJson.Default);
+            SharedJson.DefaultContext.DbfMinerConfig);
 
         if (cfg is null)
             throw new InvalidDataException($"Failed to deserialize config: {_configPath}");
