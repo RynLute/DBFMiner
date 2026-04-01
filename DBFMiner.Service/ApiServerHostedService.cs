@@ -1,6 +1,5 @@
 ﻿using DBFMiner.Shared.Dto;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
+using DBFMiner.Shared.Serialization;
 using Microsoft.AspNetCore.Http;
 
 namespace DBFMiner.Service;
@@ -34,7 +33,7 @@ public sealed class ApiServerHostedService : BackgroundService
 
         app.MapGet("/api/status", () =>
         {
-            return Results.Json(_statusStore.Snapshot());
+            return Results.Json(_statusStore.Snapshot(), SharedJson.Default);
         });
 
         app.MapPost("/api/config/reload", async (CancellationToken ct) =>
@@ -51,7 +50,7 @@ public sealed class ApiServerHostedService : BackgroundService
                     Status = _statusStore.Snapshot()
                 };
 
-                return Results.Json(resp);
+                return Results.Json(resp, SharedJson.Default);
             }
             catch (Exception ex)
             {
@@ -63,7 +62,7 @@ public sealed class ApiServerHostedService : BackgroundService
                 };
 
                 _logger.LogError(ex, "Failed to reload config");
-                return Results.Json(resp, statusCode: 500);
+                return Results.Json(resp, SharedJson.Default, statusCode: 500);
             }
         });
 

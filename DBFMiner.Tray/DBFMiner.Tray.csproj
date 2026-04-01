@@ -8,4 +8,12 @@
         <ImplicitUsings>enable</ImplicitUsings>
     </PropertyGroup>
 
+    <ItemGroup>
+      <ProjectReference Include="..\DBFMiner.Shared\DBFMiner.Shared.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Npgsql" Version="10.0.2" />
+    </ItemGroup>
+
 </Project>

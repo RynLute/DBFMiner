@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using DBFMiner.Shared.Models;
+using DBFMiner.Shared.Serialization;
 
 namespace DBFMiner.Service;
 
@@ -63,6 +64,7 @@ public sealed class ConfigProvider
             {
                 DbfFolder = "",
                 DbfSearchPattern = "*.dbf",
+                DbfSelectionMode = DbfMinerConfig.SelectionModeAll,
                 PollIntervalSeconds = 10,
                 Api = new DBFMiner.Shared.Models.ApiConfig(),
                 Postgres = new DBFMiner.Shared.Models.PostgresConfig(),
@@ -71,7 +73,7 @@ public sealed class ConfigProvider
 
             var json = JsonSerializer.Serialize(
                 defaultConfig,
-                new JsonSerializerOptions { WriteIndented = true });
+                SharedJson.Indented);
 
             await File.WriteAllTextAsync(_configPath, json, cancellationToken).ConfigureAwait(false);
             _current = defaultConfig;
@@ -85,7 +87,7 @@ public sealed class ConfigProvider
 
         var cfg = JsonSerializer.Deserialize<DbfMinerConfig>(
             text,
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            SharedJson.Default);
 
         if (cfg is null)
             throw new InvalidDataException($"Failed to deserialize config: {_configPath}");

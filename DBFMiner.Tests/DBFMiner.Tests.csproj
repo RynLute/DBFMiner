@@ -18,4 +18,9 @@
         <Using Include="Xunit"/>
     </ItemGroup>
 
+    <ItemGroup>
+      <ProjectReference Include="..\DBFMiner.Service\DBFMiner.Service.csproj" />
+      <ProjectReference Include="..\DBFMiner.Shared\DBFMiner.Shared.csproj" />
+    </ItemGroup>
+
 </Project>
