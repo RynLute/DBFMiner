@@ -1,1 +1,6 @@
-<Solution />
+<Solution>
+  <Project Path="DBFMiner.Service/DBFMiner.Service.csproj" />
+  <Project Path="DBFMiner.Shared/DBFMiner.Shared.csproj" />
+  <Project Path="DBFMiner.Tests/DBFMiner.Tests.csproj" />
+  <Project Path="DBFMiner.Tray/DBFMiner.Tray.csproj" />
+</Solution>
